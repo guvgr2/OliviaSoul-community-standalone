@@ -1,0 +1,8 @@
+dist/
+bin/
+obj/
+src/LinliShell/bin/
+src/LinliShell/obj/
+runtime/node/*
+!runtime/node/.gitkeep
+*.user

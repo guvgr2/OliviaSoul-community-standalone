@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>林离的信</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="glassBg"><i></i><i></i><i></i><i></i></div>
+
+<div class="win">
+  <div class="rail">
+    <div class="stack">
+      <button class="rb on" data-page="mail">✉</button>
+      <button class="rb" data-page="memory">记</button>
+      <button class="rb" data-page="settings">⚙</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- 信箱 -->
+    <section class="page on" id="page-mail">
+      <h2>信箱</h2>
+      <p class="sub">写给她，等她回。也偶尔，她会先写给你。</p>
+
+      <div class="card">
+        <h3>写一封信</h3>
+        <textarea id="compose" placeholder="想说什么就写什么。短一点也没关系。"></textarea>
+        <div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+          <button class="pri" id="sendBtn">寄出</button>
+          <span class="hint" id="composeHint">一封信最多 4000 字</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>往来</h3>
+        <div id="letters"></div>
+      </div>
+    </section>
+
+    <!-- 记忆 -->
+    <section class="page" id="page-memory">
+      <h2>记忆</h2>
+      <p class="sub">跨封账本只认林离已经发出的回信。来信人的设想、疑问和否定单独放在「未决」，不会当成已发生的事。</p>
+      <div class="card">
+        <h3>跨封账本</h3>
+        <dl class="kv" id="ledger"></dl>
+        <p class="hint" id="ledgerEmpty" style="display:none">还没有账本 —— 寄出第一封信之后才会建立。</p>
+      </div>
+      <div class="card">
+        <h3>给模型看的记忆上下文</h3>
+        <pre class="ctx" id="ctx"></pre>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="page" id="page-settings">
+      <h2>设置</h2>
+      <p class="sub">全部数据在本机。API Key 用 Windows DPAPI 按当前用户加密，不写日志、不进任何导出包。</p>
+
+      <div class="card">
+        <h3>模型</h3>
+        <div class="row">
+          <div class="field">
+            <label>服务商</label>
+            <select id="provider">
+              <option value="deepseek">DeepSeek</option>
+              <option value="zhipu">智谱 GLM</option>
+              <option value="moonshot">Moonshot</option>
+              <option value="custom">自定义 / 本地中转</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>模型名</label>
+            <input id="modelName" placeholder="deepseek-chat">
+          </div>
+        </div>
+        <div class="field">
+          <label>接口地址（Base URL）</label>
+          <input id="baseUrl" placeholder="https://api.deepseek.com">
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <input id="apiKey" type="password" placeholder="留空表示不修改">
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="pri" id="saveModel">保存</button>
+          <button id="testModel">测试连通性</button>
+          <span class="hint" id="modelState"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>林离主动来信</h3>
+        <p>关着的时候她从不主动写信。打开之后：24 小时最多 <b>1</b> 封，7 天最多 <b>3</b> 封，距上一封往来至少 <b>20</b> 小时，且只在可打扰时段内。</p>
+        <div class="row">
+          <div class="field">
+            <label>开关</label>
+            <select id="pEnabled">
+              <option value="0">关闭</option>
+              <option value="1">开启</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>可打扰时段</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="pStart" placeholder="09:00" style="flex:1">
+              <span style="color:var(--tx4)">–</span>
+              <input id="pEnd" placeholder="21:30" style="flex:1">
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>距上一封至少（小时）</label>
+            <input id="pGap" type="number" min="0" max="720">
+          </div>
+          <div class="field">
+            <label>24 小时上限（封）</label>
+            <input id="pDay" type="number" min="0" max="10">
+          </div>
+          <div class="field">
+            <label>7 天上限（封）</label>
+            <input id="pWeek" type="number" min="0" max="30">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="pri" id="saveProactive">保存</button>
+          <button id="checkProactive">现在判断一次</button>
+          <span class="hint" id="proactiveVerdict"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>关于</h3>
+        <p>这是一个完全本机的程序：不依赖游戏本体，不上传任何内容，没有账号，也不扣费。信件与记忆都在这台机器上。</p>
+        <p class="hint" id="dataDir"></p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
