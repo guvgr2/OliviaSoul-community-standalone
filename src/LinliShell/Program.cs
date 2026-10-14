@@ -1,4 +1,4 @@
-// 「林离的信」外壳。
+// 「OliviaSoul-community独立版」外壳。
 //
 // 职责只有三件：自检 → 拉起内置 Node 跑本机服务 → 用 Edge 的应用窗口打开界面 → 退出时把 Node 收干净。
 // 不做业务逻辑，不碰信件内容。
@@ -149,7 +149,7 @@ internal static class Program
         text.AppendLine();
         text.Append("错误代号：" + c.Code);
 
-        MessageBox.Show(text.ToString(), "林离的信 · 没能起来",
+        MessageBox.Show(text.ToString(), "OliviaSoul-community独立版 · 没能起来",
             MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 
@@ -279,7 +279,7 @@ internal static class Program
         menu.Items.Add("退出", null, (_, _) => Shutdown());
 
         Icon icon = LoadIcon(appDir);
-        _tray = new NotifyIcon { Icon = icon ?? SystemIcons.Application, Text = "林离的信", Visible = true, ContextMenuStrip = menu };
+        _tray = new NotifyIcon { Icon = icon ?? SystemIcons.Application, Text = "OliviaSoul-community独立版", Visible = true, ContextMenuStrip = menu };
         _tray.DoubleClick += (_, _) => OpenWindow();
     }
 
@@ -308,7 +308,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打不开界面：{ex.Message}\n也可以自己打开 {_url}", "林离的信", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show($"打不开界面：{ex.Message}\n也可以自己打开 {_url}", "OliviaSoul-community独立版", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -413,7 +413,7 @@ internal static class Native
     {
         try
         {
-            IntPtr h = FindWindow(null, "林离的信");
+            IntPtr h = FindWindow(null, "OliviaSoul-community独立版");
             if (h == IntPtr.Zero) return;
             if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
             SetForegroundWindow(h);

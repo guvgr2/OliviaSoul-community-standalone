@@ -1,4 +1,4 @@
-// 「林离的信」本机服务。
+// 「OliviaSoul-community独立版」本机服务。
 //
 // 这是**新写的独立程序**，不是 OliviaSoul 的改造版：不依赖游戏本体、不挂游戏、不读任何游戏目录。
 // 全部数据在本机：SQLite 一个文件 + 一封封原文。API Key 用 Windows DPAPI 按当前用户加密。
@@ -519,6 +519,23 @@ const MIME = {
   ".ttf": "font/ttf", ".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2",
 };
 
+/**
+ * 把外壳那份图标当成 favicon 吐出去。
+ * ★ 特地去读 app\icon.ico 而不是在 public\ 里再放一份：图标只有一份真源，
+ *   它同时被 install.iss 的 SetupIconFile、csproj 的 ApplicationIcon（exe 图标）、
+ *   外壳托盘的 LoadIcon、以及这里的 favicon 用着。放两份迟早会改歪一份。
+ */
+async function serveIcon(_req, res) {
+  try {
+    const data = await readFile(join(HERE, "icon.ico"));
+    res.writeHead(200, { "Content-Type": "image/x-icon", "Cache-Control": "no-store" });
+    res.end(data);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("no icon");
+  }
+}
+
 async function serveStatic(req, res, pathname) {
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const file = join(PUBLIC_DIR, rel);
@@ -711,6 +728,15 @@ const server = createServer(async (req, res) => {
       const id = path.slice("/api/letters/".length, -"/read".length);
       db.prepare("UPDATE letters SET is_read = 1 WHERE id = ?").run(id);
       return json(res, 200, { ok: true });
+    }
+    // ★ 窗口图标的唯一入口。
+    //   外壳是用 Edge 的 --app= 开窗口的，那种窗口**不用 exe 的图标**：
+    //   标题栏与任务栏取的是页面的 favicon。index.html 里没有 <link rel="icon">
+    //   （icon.ico 在 app\ 下、不在 public\ 里，HTTP 根本取不到），
+    //   于是 Edge 就顶出它自己那个地球图标 —— 用户看到的"还是默认图标"是这个，
+    //   不是 exe 里的资源（exe 里的 9 档早就验过是对的）。
+    if ((req.method === "GET" || req.method === "HEAD") && path === "/favicon.ico") {
+      return serveIcon(req, res);
     }
     if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res, path);
     res.writeHead(405); res.end("method not allowed");

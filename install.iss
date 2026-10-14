@@ -1,4 +1,4 @@
-﻿; 「林离的信」安装脚本（Inno Setup 6）
+﻿; 「OliviaSoul-community独立版」安装脚本（Inno Setup 6）
 ;
 ; 三条写在前头的坑：
 ;   1. 桌面快捷方式直接指向 exe 本身，不经任何 .bat / .vbs / .ps1 中转。
@@ -15,7 +15,7 @@
 ;     用户把代号报过来就能对上号，不用猜"它说安装失败是哪一步失败"（它的 Get-SafeSetupErrorCode）。
 ;   - 装前先请正在跑的程序退出，而不是硬抢文件（它的 Request-ManagedApplicationClose）。
 
-#define MyAppName "林离的信"
+#define MyAppName "OliviaSoul-community独立版"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "OliviaSoul 社区"
 #define MyAppExeName "LinliLetters.exe"
@@ -50,7 +50,7 @@ DisableDirPage=no
 DisableProgramGroupPage=yes
 AllowUNCPath=no
 OutputDir=dist
-OutputBaseFilename=林离的信-1.0.0-安装程序
+OutputBaseFilename=OliviaSoul-community独立版-1.0.0-安装程序
 Compression=lzma2/ultra64
 SolidCompression=yes
 ; ★ 外观：本机 Inno 是 6.6+（目录里有 SetupCustomStyle.e32 与 ISetup-dark.chm），
@@ -112,7 +112,7 @@ LicenseNotAccepted=我不同意(&D)
 LicenseLabel3=请读完这份使用协议。必须勾选「我同意」才能继续安装。
 ; 选目录页（消息名以 Default.isl 为准：只有 SelectDirDesc / SelectDirLabel3 / SelectDirBrowseLabel）
 SelectDirDesc=装到哪个文件夹？
-SelectDirLabel3=林离的信会装进下面这个文件夹。
+SelectDirLabel3=OliviaSoul-community独立版会装进下面这个文件夹。
 SelectDirBrowseLabel=点「下一步」继续；想换位置就点「浏览」。
 DiskSpaceGBLabel=所需空间：约 [gb] GB
 DiskSpaceMBLabel=所需空间：约 [mb] MB

@@ -1,4 +1,4 @@
-# 林离的信
+# OliviaSoul-community独立版
 
 **当前版本：1.0.0**
 

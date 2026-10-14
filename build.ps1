@@ -1,4 +1,4 @@
-﻿# 「林离的信」打包脚本
+﻿# 「OliviaSoul-community独立版」打包脚本
 #   1. 发布 C# 外壳（自包含单文件，用户机器上不必装 .NET）
 #   2. 组装 dist\package\（外壳 exe + app\ + runtime\）
 #   3. 调 Inno Setup 出安装程序

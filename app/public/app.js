@@ -1,4 +1,4 @@
-// 「林离的信」前端。
+// 「OliviaSoul-community独立版」前端。
 // 三块：信箱 / 记忆 / 设置。所有请求都打本地服务，不出本机。
 
 const $ = (id) => document.getElementById(id);
