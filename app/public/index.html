@@ -13,6 +13,14 @@
 <body>
 <div id="glassBg"><i></i><i></i><i></i><i></i></div>
 
+<!-- ★ 只在原生窗口里露出来。外壳的 MainWindow 是**无边框**窗口，
+     拖动 / 收进托盘 / 退出这三件事 Windows 不会再替我们做，得页面发一句话给 C#。
+     在浏览器里打开时这一整条不显示 —— 那时浏览器自带标题栏，不该再来一套。 -->
+<div class="winchrome" id="winchrome" hidden>
+  <button class="wc" id="wcMin" type="button" title="收进托盘" aria-label="收进托盘">—</button>
+  <button class="wc wc-x" id="wcQuit" type="button" title="退出程序" aria-label="退出程序">×</button>
+</div>
+
 <div class="win">
   <div class="rail">
     <div class="stack">

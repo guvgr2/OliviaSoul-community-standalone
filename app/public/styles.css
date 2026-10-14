@@ -64,6 +64,41 @@ html, body {
   to   { transform: translate3d(3vw, -2vw, 0) scale(1.08); }
 }
 
+/* ---- 原生窗口的窗口条 ----
+   ★ 只有 body.native 才显示：外壳的 MainWindow 是无边框窗口，拖动/最小化/关闭
+     都得页面自己给 C# 发一句话。在浏览器里打开时没有那个通道，整条就不该出现。 */
+.winchrome {
+  position: fixed; top: 0; left: 0; right: 0; height: 34px; z-index: 60;
+  display: none; align-items: center; justify-content: flex-end;
+  gap: 6px; padding: 0 14px; user-select: none;
+}
+body.native .winchrome { display: flex; }
+/* ★ 原生窗口下 .win 要给这条让出位置，否则内容会被压在条底下（静态读 CSS 看不出来，
+   只有 getBoundingClientRect 或真渲染才发现）。 */
+body.native .win { margin-top: 38px; height: calc(100% - 60px); }
+/* ★ 数值是渲染出来看过才定的：第一版用 .07/.14/.72，在近黑的页面上两个按钮
+   几乎看不见（真渲染的条带图里就是两块更黑的方块）。静读 CSS 完全看不出来 ——
+   浅色底上的"淡"和深色底上的"淡"不是一回事。 */
+.wc {
+  width: 26px; min-width: 26px; height: 26px; border-radius: 8px;
+  /* ★ padding 必须显式清零。全局 button 是 `padding: 0 18px`，而 box-sizing 是 border-box
+     ⇒ 内边距撑出的最小宽度（36+2=38）**压过**我写的 width:26px，实测就是 38×26。
+     光看 `.wc{width:26px}` 怎么读都是 26，只有量出来才知道是 38。 */
+  padding: 0;
+  display: grid; place-items: center; cursor: pointer;
+  /* ★ 数值是渲染出来量过三次才定的。前两版（.10→.16）在放大图里**还是看不见**：
+     实测按钮内部 (36,36,39) vs 背景 (15,15,18)，静态读 CSS 只会觉得"有 16% 白，够了吧"。
+     这条在页面最外圈、背后永远是近黑，所以可以放心提亮；不进 backdrop-filter，
+     它是浮在窗口边上的小按钮，不需要跟着后面的内容折射。 */
+  border: 1px solid rgba(255, 255, 255, .42);
+  background: rgba(255, 255, 255, .22);
+  color: #fff;
+  font: 14px/1 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  transition: background .15s ease, color .15s ease;
+}
+.wc:hover { background: rgba(255, 255, 255, .24); color: #fff; }
+.wc-x:hover { background: rgba(214, 96, 77, .88); color: #fff; border-color: rgba(255, 255, 255, .24); }
+
 /* ---- 玻璃窗 ---- */
 .win {
   position: relative;

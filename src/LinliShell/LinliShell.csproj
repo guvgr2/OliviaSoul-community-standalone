@@ -18,4 +18,16 @@
     <ApplicationIcon>..\..\installer\linli.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- ★ 界面还是 HTML/CSS 画的（玻璃质感只有浏览器引擎能渲染），但窗口是我们自己的：
+           不再是外壳去拉起 Edge 的应用窗口（msedge 的 app 模式）。换来：
+             · 任务栏上是这个程序自己的名字和图标（以前是 Edge，图标取网页 favicon）；
+             · 能真的收进托盘；
+             · 页面能反过来叫窗口拖动、最小化、关闭。
+         WebView2 用的是系统里已经装好的运行时（本机两个版本都在），不往包里塞内核；
+         运行时找不到时 MainWindow 自己退回系统浏览器。
+         ★ XML 注释里不能写连续两个连字符，所以这里不写那个命令行开关的原样。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
+  </ItemGroup>
+
 </Project>

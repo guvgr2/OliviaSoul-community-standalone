@@ -30,12 +30,13 @@ namespace LinliLetters;
 internal static class Program
 {
     // ★ 安装程序用这个互斥量认出"林离正在跑"，装之前先请它退出（install.iss 的 AppMutex）。
-    private const string AppMutexName = "LinliLetters.App";
+    private const string AppMutexName = App.MutexName;
 
     private static NotifyIcon _tray;
     private static Process _node;
     private static string _url;
     private static Mutex _single;
+    private static MainWindow _window;
 
     [STAThread]
     private static void Main(string[] args)
@@ -47,7 +48,12 @@ internal static class Program
             a => string.Equals(a, "--startup", StringComparison.OrdinalIgnoreCase));
 
         // 只允许一个实例。第二个实例把已经开着的那一个叫醒就够了。
-        _single = new Mutex(true, AppMutexName, out bool owned);
+        // ★ LINLI_MUTEX 是**测试用的口子**：自动化要验证"窗口到底出不出来"时，
+        //   用户那份可能正开着，第二个实例会被这个互斥量挡在门外、静默退出，
+        //   看起来就像"窗口没出来"。换个名字就能另起一个，互不干扰。
+        //   （和 LINLI_PORT 同一个套路；不设这个变量就还是默认的那个名字。）
+        string mutexName = Environment.GetEnvironmentVariable("LINLI_MUTEX") ?? AppMutexName;
+        _single = new Mutex(true, mutexName, out bool owned);
         if (!owned)
         {
             _single.Dispose();
@@ -293,40 +299,60 @@ internal static class Program
         catch { return null; }
     }
 
+    /// <summary>
+    /// 打开主窗口。
+    /// ★ 现在是**我们自己的窗口**（MainWindow + WebView2），不再是 Edge 的应用窗口。
+    ///   换来三件事：任务栏上是这个程序自己的名字和图标；能真的收进托盘；
+    ///   页面能反过来叫它拖动 / 最小化 / 关闭。
+    /// ★ 窗口只建一次、之后复用 —— 关掉只是藏起来，不是销毁。
+    ///   否则每次"打开"都要重新初始化一次内核（一两秒，而且滚动位置和未读状态都丢）。
+    /// </summary>
     private static void OpenWindow()
     {
         try
         {
-            string edge = FindEdge();
-            if (!string.IsNullOrEmpty(edge))
+            if (_window == null || _window.IsDisposed)
             {
-                // --app= 给出独立窗口：没有地址栏和标签页，看起来就是一个程序。
-                Process.Start(new ProcessStartInfo(edge, $"--app={_url} --window-size=1180,820 --disable-features=msEdgeTranslations") { UseShellExecute = true });
-                return;
+                _window = new MainWindow(_url, LoadIcon(ResolveAppDir()));
+                _window.RequestHide += (_, _) => HideWindow();
+                _window.RequestClose += (_, _) => HideWindow();
+                _window.RequestQuit += (_, _) => Shutdown();
+                _window.FormClosing += (_, e) =>
+                {
+                    // Alt+F4 这类系统关闭也按"收进托盘"处理：陪伴类程序不该一点就死。
+                    e.Cancel = true;
+                    HideWindow();
+                };
             }
-            Process.Start(new ProcessStartInfo(_url) { UseShellExecute = true });
+            if (!_window.Visible) _window.Show();
+            if (_window.WindowState == FormWindowState.Minimized) _window.WindowState = FormWindowState.Normal;
+            _window.Activate();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打不开界面：{ex.Message}\n也可以自己打开 {_url}", "OliviaSoul-community独立版", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show($"打不开界面：{ex.Message}\n也可以自己打开 {_url}", App.Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
-    private static string FindEdge()
+    private static void HideWindow()
     {
-        string[] candidates =
+        if (_window == null) return;
+        _window.Hide();
+        // ★ 第一次收进托盘时说一句。不说的话，用户会以为"关掉了 = 没了"，
+        //   然后每次都去桌面找图标重开，越开越多实例（虽然第二个只会叫醒第一个）。
+        if (_tray != null && !_shownTrayHint)
         {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge", "Application", "msedge.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge", "Application", "msedge.exe"),
-        };
-        foreach (string path in candidates)
-            if (File.Exists(path)) return path;
-        return null;
+            _shownTrayHint = true;
+            _tray.ShowBalloonTip(4000, App.Title, "我在托盘里。要开的时候点一下就够了。", ToolTipIcon.Info);
+        }
     }
+
+    private static bool _shownTrayHint;
 
     private static void Shutdown()
     {
         KillNode();
+        if (_window != null && !_window.IsDisposed) { _window.Dispose(); _window = null; }
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         Application.Exit();
     }

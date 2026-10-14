@@ -696,6 +696,28 @@ $("checkProactive").addEventListener("click", async () => {
   });
 })();
 
+// ---------------------------------------------------------------- 原生窗口
+
+// ★ 外壳的 MainWindow 是**无边框**的，所以拖动、收进托盘、退出这三件事
+//   得由页面发一句话给 C#（window.chrome.webview.postMessage），那边照做。
+//   在浏览器里打开时没有这个通道 ⇒ 什么都不做、窗口条也不显示（那时浏览器自带标题栏）。
+// ★ 判据是"有没有 chrome.webview"，不是"userAgent 里有没有 Edge" ——
+//   UA 判断会误伤：Edge 里手动打开同一个地址也会匹配到，那是我们**没有**自己窗口的情况。
+(function initNativeWindow() {
+  const host = window.chrome && window.chrome.webview;
+  if (!host) return;
+  document.body.classList.add("native");
+  const bar = document.getElementById("winchrome");
+  if (!bar) return;
+  bar.hidden = false;
+
+  const say = (action) => { try { host.postMessage(action); } catch { /* 通道断了就算了 */ } };
+  // 拖动：按在这条上（按钮除外）就叫窗口跟着走。
+  bar.addEventListener("mousedown", (e) => { if (e.target.closest(".wc")) return; say("drag"); });
+  document.getElementById("wcMin")?.addEventListener("click", () => say("min"));
+  document.getElementById("wcQuit")?.addEventListener("click", () => say("quit"));
+})();
+
 // ---------------------------------------------------------------- 启动
 
 // ★ 启动时要先读一次设置：第一次打开的询问弹窗挂在 loadSettings() 末尾。
