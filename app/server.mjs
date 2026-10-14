@@ -6,17 +6,34 @@
 // 三条设计底线：
 //   1. 不伪造用户发言 —— 主动来信没有任何来信，由头只来自程序这侧的真实事件。
 //   2. 不推进关系 —— 主动信不写新的情感、称呼或亲密动作；账本只认林离已经发出的回信。
-//   3. 不频繁 —— 主动来信默认关闭，开启后 24h 最多 1 封、7 天最多 3 封、距上一封至少 20 小时。
+//   3. 不频繁 —— 主动来信默认开启（用户 2026-10-13 定），但 24h 最多 1 封、7 天最多 4 封、距上一封至少 20 小时。
+//      第一次打开时会问一句「就这样好不好」，用户可以当场关掉；只问一次。
 
 import { createServer } from "node:http";
-import { readFile, writeFile, rm, readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname, basename, extname } from "node:path";
+import { join, dirname, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID, randomBytes } from "node:crypto";
 import { runSecretPipeline } from "./secret-store.mjs";
+import {
+  PROACTIVE_DEFAULTS,
+  evaluateProactive as coreEvaluateProactive,
+  proactiveIntro,
+  triggerLabel,
+  inspectProactive,
+  inspectReply,
+  parseLedger,
+  parseVariant,
+  playbackTimeOfDay,
+  prettySongName,
+  selectVariant,
+  LIBRARY_DIR_PATTERN,
+  TIME_SLOT_LABELS,
+  TIME_SLOTS,
+} from "./core.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(HERE, "public");
@@ -25,7 +42,48 @@ const DATA_DIR = join(homedir(), "AppData", "Roaming", "LinliLetters");
 const DB_FILE = join(DATA_DIR, "letters.sqlite");
 
 const PORT = Number(process.env.LINLI_PORT ?? 0); // 0 = 让系统给端口
+// /health 要报版本：外壳自检失败时把这一行一起给用户，就知道是哪一版出的问题。
+const APP_VERSION = "1.0.0";
 const STATUS = Object.freeze({ PENDING: 1, LLM_PROCESSING: 3, REPLIED: 4, FAILED: 5 });
+
+// ---------------------------------------------------------------- 访问边界
+//
+// ★ 这是 1.0.0 里最严重的一个洞：服务只听 127.0.0.1，但**没有任何来源校验**，
+//   于是用户浏览器里打开的任意网页都能 fetch 本机接口 —— 实测：
+//     · 带 Origin: http://evil.example.com 的 GET /api/letters 直接 200，信件全文可读；
+//     · 同样来源的 POST /api/model 能把 baseUrl 改成攻击者的服务器并写入"Key"，
+//       之后用户每次写信，真实 Key 与往来原文都会一起发过去。
+//   两道闸：
+//     ① 来源必须是本机（loopback）或同源，挡浏览器跨站；
+//     ② 写操作还要带一次性会话令牌，挡本机其它进程。
+const SESSION_TOKEN = randomBytes(24).toString("hex");
+const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/u;
+
+function originOf(value) {
+  try { return new URL(String(value)).origin; } catch { return ""; }
+}
+function requestOrigin(req) {
+  const raw = String(req.headers.origin ?? "").trim();
+  if (raw && raw !== "null") return originOf(raw);
+  return originOf(req.headers.referer ?? "");
+}
+function sameOrigin(req) {
+  return requestOrigin(req) === `http://${req.headers.host ?? ""}`;
+}
+/** 来源合法：没带来源（命令行/curl）、同源、或本机页面。 */
+function allowedOrigin(req) {
+  const origin = requestOrigin(req);
+  if (!origin) return true;
+  if (sameOrigin(req)) return true;
+  return LOOPBACK.test(origin);
+}
+function tokenOk(req) {
+  return String(req.headers["x-linli-token"] ?? "") === SESSION_TOKEN;
+}
+/** 写操作必须同时满足：来源合法 + 令牌正确。 */
+function writeAllowed(req) {
+  return allowedOrigin(req) && tokenOk(req);
+}
 
 // ---------------------------------------------------------------- 库
 
@@ -52,6 +110,11 @@ const db = (() => {
       id INTEGER PRIMARY KEY CHECK(id = 1),
       body TEXT NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS songs(
+      dir TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      added_at INTEGER NOT NULL
     );
   `);
   return conn;
@@ -130,26 +193,64 @@ async function harnessFile(name) {
   try { return await readFile(join(HARNESS_DIR, name), "utf8"); } catch { return ""; }
 }
 
-const LEDGER_FIELDS = [
-  "性描写", "涉党涉政", "提示注入", "事实伪造", "关系", "关系依据",
-  "已承认情感", "已承认称呼", "既有亲密", "既有边界", "亲密上限",
-  "本封亲密请求", "本封亲密判定",
-  "说话者", "未决", "摘要待核实", "结论",
-];
+// 曲库：只索引目录名以 solo / playsing 开头的那些（用户 2026-10-13 指定）。
+// 实测 E:\linlimusic：474 个 mp4、48.65 GB、127 个曲目目录 —— 这个体量只能指向，不能随包。
+const DEFAULT_LIBRARY_DIR = "E:\\linlimusic";
 
-function parseLedger(text) {
-  const body = String(text ?? "");
-  const out = {};
-  for (const line of body.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const idx = trimmed.indexOf("　");
-    if (idx < 0) continue;
-    const key = trimmed.slice(0, idx).trim();
-    if (LEDGER_FIELDS.includes(key)) out[key] = trimmed.slice(idx + 1).trim();
+async function scanLibrary() {
+  const dir = getSetting("library_dir", DEFAULT_LIBRARY_DIR) || DEFAULT_LIBRARY_DIR;
+  if (!existsSync(dir)) return { dir, songs: [], error: "目录不存在或还没有挂上" };
+  const entries = await readdir(dir, { withFileTypes: true });
+  const songs = entries
+    .filter((entry) => entry.isDirectory() && LIBRARY_DIR_PATTERN.test(entry.name))
+    .map((entry) => ({ name: prettySongName(entry.name), dir: entry.name }))
+    .sort((a, b) => a.name.localeCompare(b.name, "zh"));
+  return { dir, songs, count: songs.length };
+}
+
+// 变体选择与时段判定在 core.mjs（纯函数，可单测）。
+async function listVariants(songDir) {
+  const root = getSetting("library_dir", DEFAULT_LIBRARY_DIR) || DEFAULT_LIBRARY_DIR;
+  const full = join(root, songDir);
+  if (!existsSync(full)) return [];
+  const entries = await readdir(full, { withFileTypes: true });
+  return entries
+    .filter((e) => e.isFile() && /\.mp4$/iu.test(e.name))
+    .map((e) => ({ file: e.name, ...(parseVariant(e.name) ?? {}) }))
+    .filter((v) => v.tod);
+}
+
+async function importedSongs() {
+  const rows = db.prepare("SELECT dir, name, added_at FROM songs ORDER BY added_at DESC, dir").all();
+  const out = [];
+  for (const row of rows) {
+    const variants = await listVariants(row.dir);
+    out.push({ ...row, variantCount: variants.length, slots: [...new Set(variants.map((v) => v.tod))] });
   }
   return out;
 }
+
+/** 当前时间点该播哪一个文件。 */
+// todOverride 只服务两件事：① 让这个接口能被单测（不用等到 16:00 才知道傍晚对不对）；
+// ② 客户端预加载下一时段的素材。正常播放一律跟着本地时钟走，不接受前端指定。
+async function resolvePlayback(songDir, view = "NI", todOverride = null) {
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const tod = TIME_SLOTS.includes(todOverride) ? todOverride : playbackTimeOfDay(minutes);
+  const variants = await listVariants(songDir);
+  const picked = selectVariant(variants, tod, view);
+  return {
+    dir: songDir,
+    tod,
+    label: TIME_SLOT_LABELS[tod] ?? tod,
+    view,
+    variantCount: variants.length,
+    file: picked?.file ?? null,
+    url: picked ? `/api/media?dir=${encodeURIComponent(songDir)}&file=${encodeURIComponent(picked.file)}` : null,
+  };
+}
+
+// 账本解析在 core.mjs（纯函数，可单测）。
 
 function ledgerText() {
   const row = db.prepare("SELECT body FROM ledger WHERE id = 1").get();
@@ -251,21 +352,7 @@ async function runPrecheck(incoming) {
   return { ledger, raw, blocked };
 }
 
-const FORBIDDEN_IN_REPLY = ["由头", "触发", "主动来信", "主动信", "System", "prompt", "PROMPT", "{{", "}}", "预检", "账本", "栏目"];
-
-function inspectReply(text) {
-  const body = String(text ?? "").trim();
-  if (!body) return { ok: false, reason: "空正文" };
-  for (const word of FORBIDDEN_IN_REPLY) {
-    if (body.includes(word)) return { ok: false, reason: `正文出现禁词：${word}` };
-  }
-  const cjk = (body.match(/[一-龥]/g) ?? []).length;
-  if (cjk > 240) return { ok: false, reason: `正文 ${cjk} 字，超过 240 字` };
-  if (cjk < 10) return { ok: false, reason: `正文仅 ${cjk} 字，过短` };
-  if (/[A-Za-z]{8,}/.test(body)) return { ok: false, reason: "正文出现英文长串" };
-  if (/^(林离|回信)\s*[:：]/.test(body)) return { ok: false, reason: "正文带了角色名前缀" };
-  return { ok: true, body };
-}
+// 回信自检在 core.mjs（纯函数，可单测）。
 
 async function generateReply(incoming, ledger) {
   const [rules, persona, opening] = await Promise.all([
@@ -302,86 +389,59 @@ async function generateReply(incoming, ledger) {
 
 // ---------------------------------------------------------------- 主动来信
 
-const PROACTIVE_FORBIDDEN = [
-  ...FORBIDDEN_IN_REPLY,
-  "你上次说", "你说过", "你让我", "你信里", "如你所说", "你刚才说",
-  "老公", "老婆", "男朋友", "女朋友", "在一起", "亲一下", "抱抱", "想我吗",
-];
-
-const PROACTIVE_DEFAULTS = Object.freeze({
-  enabled: false, windowStart: "09:00", windowEnd: "21:30",
-  minGapHours: 20, maxPerDay: 1, maxPerWeek: 3, checkIntervalMinutes: 30,
-});
-
 function proactiveSettings() {
+  // 默认值统一从 core.mjs 的 PROACTIVE_DEFAULTS 来（开启 / 7 天 4 封），别在这里再写一份。
+  const d = PROACTIVE_DEFAULTS;
   return {
-    enabled: getSetting("proactive_enabled", "0") === "1",
-    windowStart: getSetting("proactive_window_start", PROACTIVE_DEFAULTS.windowStart),
-    windowEnd: getSetting("proactive_window_end", PROACTIVE_DEFAULTS.windowEnd),
-    minGapHours: Number(getSetting("proactive_min_gap_hours", PROACTIVE_DEFAULTS.minGapHours)),
-    maxPerDay: Number(getSetting("proactive_max_per_day", PROACTIVE_DEFAULTS.maxPerDay)),
-    maxPerWeek: Number(getSetting("proactive_max_per_week", PROACTIVE_DEFAULTS.maxPerWeek)),
+    enabled: getSetting("proactive_enabled", d.enabled ? "1" : "0") === "1",
+    windowStart: getSetting("proactive_window_start", d.windowStart),
+    windowEnd: getSetting("proactive_window_end", d.windowEnd),
+    minGapHours: Number(getSetting("proactive_min_gap_hours", d.minGapHours)),
+    maxPerDay: Number(getSetting("proactive_max_per_day", d.maxPerDay)),
+    maxPerWeek: Number(getSetting("proactive_max_per_week", d.maxPerWeek)),
+    // ★ 第一次打开时问过没有。只问一次 —— 关掉弹窗也算答过了，不再天天问。
+    asked: getSetting("proactive_asked", "0") === "1",
   };
 }
 
-function clockToMinutes(text) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(text));
-  return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
-}
-
+/**
+ * 判定本身在 core.mjs（纯函数）。这里只负责把库里的事实查出来喂给它 ——
+ * 判据一旦埋在 SQL 里就没法单测，而没法测的判据等于没有判据。
+ */
 function evaluateProactive(input = {}) {
-  const settings = proactiveSettings();
-  if (!settings.enabled) return { ok: false, reason: "默认关闭；在设置里开启后林离才会主动来信" };
   const at = input.nowMs ? new Date(input.nowMs) : new Date();
-  const minutes = at.getHours() * 60 + at.getMinutes();
-  if (minutes < clockToMinutes(settings.windowStart) || minutes > clockToMinutes(settings.windowEnd)) {
-    return { ok: false, reason: `不在可打扰窗口（${settings.windowStart}–${settings.windowEnd}）` };
-  }
   const ts = nowSeconds();
-  const busy = db.prepare("SELECT COUNT(*) value FROM letters WHERE status IN (?, ?)").get(STATUS.PENDING, STATUS.LLM_PROCESSING);
-  if ((busy?.value ?? 0) > 0) return { ok: false, reason: "还有信在生成中" };
-  const unread = db.prepare("SELECT COUNT(*) value FROM letters WHERE origin = 'proactive' AND is_read = 0").get();
-  if ((unread?.value ?? 0) > 0) return { ok: false, reason: "上一封主动信还没读" };
-  const exchanged = db.prepare("SELECT COUNT(*) value FROM letters WHERE status = ? AND reply_text IS NOT NULL").get(STATUS.REPLIED);
-  if ((exchanged?.value ?? 0) < 1) return { ok: false, reason: "还没有任何往来，林离无从下笔" };
-
+  const count = (sql, ...args) => db.prepare(sql).get(...args)?.value ?? 0;
   const last = db.prepare("SELECT created_at FROM letters ORDER BY created_at DESC, rowid DESC LIMIT 1").get();
-  if (last && settings.minGapHours > 0) {
-    const gap = (ts - last.created_at) / 3600;
-    if (gap < settings.minGapHours) return { ok: false, reason: `距上一封仅 ${gap.toFixed(1)} 小时，未达 ${settings.minGapHours} 小时` };
-  }
-  const day = db.prepare("SELECT COUNT(*) value FROM letters WHERE origin = 'proactive' AND created_at >= ?").get(ts - 24 * 3600);
-  if ((day?.value ?? 0) >= settings.maxPerDay) return { ok: false, reason: `24 小时内已发 ${day.value} 封，达上限 ${settings.maxPerDay}` };
-  const week = db.prepare("SELECT COUNT(*) value FROM letters WHERE origin = 'proactive' AND created_at >= ?").get(ts - 7 * 24 * 3600);
-  if ((week?.value ?? 0) >= settings.maxPerWeek) return { ok: false, reason: `7 天内已发 ${week.value} 封，达上限 ${settings.maxPerWeek}` };
+  // ★ 她写过的信（按时间正序）⇒ 核心判定用它找"没闭环的话题"、算反思档案。
+  //   只取正文与时间戳，不取别的 —— 判定需要的就这些。
+  const herLetters = db.prepare(
+    "SELECT id, created_at at, reply_text body, 'her' from_ FROM letters " +
+    "WHERE status = ? AND reply_text IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 40"
+  ).all(STATUS.REPLIED).map((r) => ({ id: r.id, at: r.at, body: r.body ?? "", from: "her" })).reverse();
 
-  let trigger;
-  if (input.songTitle) trigger = { kind: "song_played", text: `你刚刚听完《${input.songTitle}》。` };
-  else if (input.libraryFinding) trigger = { kind: "library_finding", text: `整理时发现：${input.libraryFinding}` };
-  else if (last) {
-    const days = Math.floor((ts - last.created_at) / 86400);
-    if (days >= 3) trigger = { kind: "quiet_days", text: `你们已经有 ${days} 天没有往来了。` };
-  }
-  if (!trigger) {
-    const hour = at.getHours();
-    trigger = { kind: "time_of_day", text: `这是一个平常的${hour < 12 ? "早上" : hour < 18 ? "下午" : "晚上"}。` };
-  }
-  return { ok: true, trigger, reason: "可以写" };
+  const ctx = {
+    nowMinutes: at.getHours() * 60 + at.getMinutes(),
+    nowSeconds: ts,
+    herLetters,
+    busyCount: count("SELECT COUNT(*) value FROM letters WHERE status IN (?, ?)", STATUS.PENDING, STATUS.LLM_PROCESSING),
+    unreadProactive: count("SELECT COUNT(*) value FROM letters WHERE origin = 'proactive' AND is_read = 0"),
+    exchangedCount: count("SELECT COUNT(*) value FROM letters WHERE status = ? AND reply_text IS NOT NULL", STATUS.REPLIED),
+    lastCreatedAt: last ? last.created_at : null,
+    proactive24h: count("SELECT COUNT(*) value FROM letters WHERE origin = 'proactive' AND created_at >= ?", ts - 24 * 3600),
+    proactive7d: count("SELECT COUNT(*) value FROM letters WHERE origin = 'proactive' AND created_at >= ?", ts - 7 * 24 * 3600),
+    // 没显式传曲名时，用「最近听完的那一首」（曲库页里点的）
+    songTitle: input.songTitle ?? getSetting("last_played_title", "") ?? "",
+    libraryFinding: input.libraryFinding,
+    firstOpenToday: input.firstOpenToday,
+  };
+  return coreEvaluateProactive(proactiveSettings(), ctx);
 }
 
-function inspectProactive(text) {
-  const body = String(text ?? "").trim();
-  if (!body) return { ok: false, reason: "空正文" };
-  for (const word of PROACTIVE_FORBIDDEN) {
-    if (body.includes(word)) return { ok: false, reason: `正文出现禁词：${word}` };
-  }
-  const cjk = (body.match(/[一-龥]/g) ?? []).length;
-  if (cjk > 200) return { ok: false, reason: `正文 ${cjk} 字，超过 200 字上限` };
-  if (cjk < 20) return { ok: false, reason: `正文仅 ${cjk} 字，过短` };
-  const paragraphs = body.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-  if (paragraphs.length > 3) return { ok: false, reason: `正文 ${paragraphs.length} 段，超过 3 段` };
-  if (/[A-Za-z]{6,}/.test(body)) return { ok: false, reason: "正文出现英文长串" };
-  return { ok: true, body };
+/** 给由头补一个给人看的说法。没有由头就原样返回 —— 别凭空造一个出来。 */
+function withTriggerLabel(trigger) {
+  if (!trigger) return trigger;
+  return { ...trigger, label: triggerLabel(trigger.kind) };
 }
 
 async function generateProactive(trigger) {
@@ -450,7 +510,14 @@ async function readJsonBody(req, limit = 2 * 1024 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
+// ★ 必须有字体那几档：缺了就按 application/octet-stream 吐出去，
+//   浏览器可能因此不认这个 @font-face —— 那样信的正文会静默退回雅黑，看起来"没生效"。
+const MIME = {
+  ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
+  ".ttf": "font/ttf", ".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2",
+};
 
 async function serveStatic(req, res, pathname) {
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
@@ -466,16 +533,118 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+/**
+ * 只吐曲库目录里的 mp4。路径必须解析后仍在曲库目录内 —— 否则就是任意文件读取。
+ * 支持 Range，否则浏览器拖动进度条会失效。
+ */
+async function serveMedia(req, res, songDir, fileName) {
+  const root = getSetting("library_dir", DEFAULT_LIBRARY_DIR) || DEFAULT_LIBRARY_DIR;
+  const base = join(root, String(songDir ?? ""));
+  const target = join(base, String(fileName ?? ""));
+  if (!target.startsWith(base) || !existsSync(target) || !/\.mp4$/iu.test(target)) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("not found");
+  }
+  const size = (await import("node:fs")).statSync(target).size;
+  const range = req.headers.range;
+  const type = "video/mp4";
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/u.exec(String(range));
+    const start = m && m[1] ? Number(m[1]) : 0;
+    const end = m && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+    res.writeHead(206, {
+      "Content-Type": type,
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": end - start + 1,
+    });
+    (await import("node:fs")).createReadStream(target, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { "Content-Type": type, "Accept-Ranges": "bytes", "Content-Length": size });
+  (await import("node:fs")).createReadStream(target).pipe(res);
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
   const path = url.pathname;
   try {
+    // ① 来源闸：挡住任意网页跨站调用本机接口
+    if (!allowedOrigin(req)) return json(res, 403, { error: "来源不被允许" });
+
+    // ★ 自检契约：外壳（LinliShell）起来之后先探这一眼，确认服务**真的在应答**再进界面。
+    //   「端口占了」和「起来了但卡住了」是两种不同的故障，没有这一眼就只能靠超时猜。
+    //   只回最粗的三件事：活着、版本、数据目录在不在。不碰任何信件内容。
+    if ((req.method === "GET" || req.method === "HEAD") && path === "/health") {
+      return json(res, 200, {
+        ok: true,
+        service: "linli-letters",
+        version: APP_VERSION,
+        dataDirReady: existsSync(DATA_DIR),
+        pid: process.pid,
+      });
+    }
+
+    // 会话令牌只发给通过来源检查的同源页面
+    if (req.method === "GET" && path === "/api/session") {
+      return json(res, 200, { token: SESSION_TOKEN });
+    }
+
+    // ② 令牌闸：写操作必须带令牌，挡住本机其它进程
+    if (req.method !== "GET" && req.method !== "HEAD" && !tokenOk(req)) {
+      return json(res, 403, { error: "缺少会话令牌" });
+    }
     if (req.method === "GET" && path === "/api/letters") {
       const rows = db.prepare("SELECT id, content, reply_text, origin, status, error, created_at, replied_at, is_read, trigger_kind FROM letters ORDER BY created_at DESC, rowid DESC LIMIT 200").all();
       return json(res, 200, { letters: rows });
     }
     if (req.method === "GET" && path === "/api/memory") {
       return json(res, 200, { ledger: parseLedger(ledgerText()), ledgerText: ledgerText(), context: memoryContext() });
+    }
+
+    // ---- 曲库：指向本机目录，不随包 ------------------------------------
+    // 48.65 GB / 474 个文件不可能打进安装包（包现在 52.6 MB），所以这里是「引用」不是「打包」。
+    if (req.method === "GET" && path === "/api/library") {
+      return json(res, 200, await scanLibrary());
+    }
+    if (req.method === "POST" && path === "/api/library/dir") {
+      const body = await readJsonBody(req);
+      const dir = String(body.dir ?? "").trim();
+      if (dir && !existsSync(dir)) return json(res, 400, { error: "目录不存在" });
+      setSetting("library_dir", dir);
+      return json(res, 200, await scanLibrary());
+    }
+    if (req.method === "GET" && path === "/api/library/play") {
+      const songDir = url.searchParams.get("dir") ?? "";
+      const view = (url.searchParams.get("view") ?? "NI").toUpperCase();
+      const todParam = (url.searchParams.get("tod") ?? "").toUpperCase();
+      if (!songDir) return json(res, 400, { error: "没有指定曲目" });
+      return json(res, 200, await resolvePlayback(songDir, view, TIME_SLOTS.includes(todParam) ? todParam : null));
+    }
+    if (req.method === "GET" && path === "/api/media") {
+      return serveMedia(req, res, url.searchParams.get("dir"), url.searchParams.get("file"));
+    }
+    if (req.method === "GET" && path === "/api/library/songs") {
+      return json(res, 200, { songs: await importedSongs() });
+    }
+    if (req.method === "POST" && path === "/api/library/import") {
+      const body = await readJsonBody(req);
+      const songDir = String(body.dir ?? "").trim();
+      if (!songDir) return json(res, 400, { error: "没有指定曲目" });
+      const known = (await scanLibrary()).songs ?? [];
+      const hit = known.find((s) => s.dir === songDir);
+      if (!hit) return json(res, 400, { error: "曲库里没有这一首" });
+      db.prepare("INSERT INTO songs(dir, name, added_at) VALUES(?, ?, ?) ON CONFLICT(dir) DO UPDATE SET name = excluded.name")
+        .run(hit.dir, hit.name, nowSeconds());
+      return json(res, 200, { songs: await importedSongs() });
+    }
+    if (req.method === "POST" && path === "/api/library/played") {
+      const body = await readJsonBody(req);
+      const title = String(body.title ?? "").trim();
+      if (!title) return json(res, 400, { error: "没有曲名" });
+      setSetting("last_played_title", title);
+      setSetting("last_played_at", nowSeconds());
+      return json(res, 200, { title });
     }
     if (req.method === "GET" && path === "/api/model") {
       const { provider, baseUrl, model, hasKey } = await readModel();
@@ -494,7 +663,17 @@ const server = createServer(async (req, res) => {
       }
     }
     if (req.method === "GET" && path === "/api/proactive") {
-      return json(res, 200, { settings: proactiveSettings(), defaults: PROACTIVE_DEFAULTS, verdict: evaluateProactive() });
+      const settings = proactiveSettings();
+      const verdict = evaluateProactive();
+      return json(res, 200, {
+        settings,
+        defaults: PROACTIVE_DEFAULTS,
+        // ★ 由头只给界面**人话**（trigger.label），不给内部代号 ——
+        //   原来界面直接渲染 trigger.kind，用户会看到「现在可以写（song_played）」。
+        verdict: { ...verdict, trigger: withTriggerLabel(verdict.trigger) },
+        // ★ 要不要弹"第一次询问"的窗，判定在 core.mjs（纯函数，可单测），这里不自己写一遍。
+        shouldAsk: proactiveIntro(settings).shouldAsk,
+      });
     }
     if (req.method === "POST" && path === "/api/proactive") {
       const patch = await readJsonBody(req);
@@ -502,12 +681,16 @@ const server = createServer(async (req, res) => {
         const map = {
           enabled: "proactive_enabled", windowStart: "proactive_window_start", windowEnd: "proactive_window_end",
           minGapHours: "proactive_min_gap_hours", maxPerDay: "proactive_max_per_day", maxPerWeek: "proactive_max_per_week",
+          asked: "proactive_asked",
         };
         const settingKey = map[key];
         if (!settingKey) continue;
-        setSetting(settingKey, key === "enabled" ? (value ? "1" : "0") : String(value));
+        const on = ["enabled", "asked"].includes(key);
+        setSetting(settingKey, on ? (value ? "1" : "0") : String(value));
       }
-      return json(res, 200, { settings: proactiveSettings() });
+      // ★ 用户主动把开关打开 ⇒ 等价于"已经答过这个问题了"，别再弹一次。
+      if (patch?.enabled === true) setSetting("proactive_asked", "1");
+      return json(res, 200, { settings: proactiveSettings(), shouldAsk: proactiveIntro(proactiveSettings()).shouldAsk });
     }
     if (req.method === "POST" && path === "/api/proactive/check") {
       const body = await readJsonBody(req).catch(() => ({}));

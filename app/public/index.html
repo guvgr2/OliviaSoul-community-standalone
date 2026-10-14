@@ -13,6 +13,7 @@
   <div class="rail">
     <div class="stack">
       <button class="rb on" data-page="mail">✉</button>
+      <button class="rb" data-page="library">♪</button>
       <button class="rb" data-page="memory">记</button>
       <button class="rb" data-page="settings">⚙</button>
     </div>
@@ -36,6 +37,38 @@
       <div class="card">
         <h3>往来</h3>
         <div id="letters"></div>
+      </div>
+    </section>
+
+    <!-- 曲库 -->
+    <section class="page" id="page-library">
+      <h2>曲库</h2>
+      <p class="sub">指向本机目录，不随包发放 —— 那批曲子 48.65 GB，塞不进安装包。</p>
+      <div class="card">
+        <h3>曲库目录</h3>
+        <div style="display:flex;gap:10px;align-items:center">
+          <input id="libraryDir" placeholder="E:\linlimusic" style="flex:1">
+          <button class="pri" id="saveLibraryDir">保存</button>
+        </div>
+        <p class="hint" id="libraryState" style="margin-top:10px"></p>
+      </div>
+      <div class="card">
+        <h3>曲库里的曲目</h3>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">
+          <button class="pri" id="importRandom">随机导入一首</button>
+          <span class="hint">导入后才会出现在下面，并可以按当前时段播放</span>
+        </div>
+        <div id="songs"></div>
+      </div>
+
+      <div class="card">
+        <h3>已导入</h3>
+        <div id="imported"></div>
+      </div>
+
+      <div class="card">
+        <h3>播放</h3>
+        <div id="player"><p class="hint">还没有播放。点上面任意一首的「按当前时段播放」。</p></div>
       </div>
     </section>
 
@@ -73,7 +106,8 @@
           </div>
           <div class="field">
             <label>模型名</label>
-            <input id="modelName" placeholder="deepseek-chat">
+            <input id="modelName" list="modelList" placeholder="选一个，或自己填">
+            <datalist id="modelList"></datalist>
           </div>
         </div>
         <div class="field">
@@ -93,7 +127,7 @@
 
       <div class="card">
         <h3>林离主动来信</h3>
-        <p>关着的时候她从不主动写信。打开之后：24 小时最多 <b>1</b> 封，7 天最多 <b>3</b> 封，距上一封往来至少 <b>20</b> 小时，且只在可打扰时段内。</p>
+        <p>关着的时候她从不主动写信。打开之后：24 小时最多 <b>1</b> 封，7 天最多 <b>4</b> 封，距上一封往来至少 <b>20</b> 小时，且只在可打扰时段内。</p>
         <div class="row">
           <div class="field">
             <label>开关</label>
@@ -137,11 +171,67 @@
         <p>这是一个完全本机的程序：不依赖游戏本体，不上传任何内容，没有账号，也不扣费。信件与记忆都在这台机器上。</p>
         <p class="hint" id="dataDir"></p>
       </div>
+
+      <!-- 协议放在**页面底部的一行小链接**里，不占版面 —— 常见桌面软件的排法。
+           正文来自 legal.js（由 协议.txt 生成），点开在弹层里读；
+           安装时向导里读的是同一份 协议.txt，两处不会是两套说法。 -->
+      <div class="legalbar">
+        <button class="lnk" id="lnkPrivacy">隐私政策</button>
+        <span class="lnk-sep">|</span>
+        <button class="lnk" id="lnkTerms">服务协议</button>
+      </div>
     </section>
   </div>
 </div>
 
+<!-- 协议弹层：内容由 renderLegal() 从 window.LEGAL 填进去，正文不在 HTML 里，避免手抄第二份 -->
+<div class="modal" id="legalModal" hidden>
+  <div class="modal-mask" data-close="1"></div>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="legalTitle">
+    <div class="modal-head">
+      <h3 id="legalTitle"></h3>
+      <button class="modal-x" data-close="1" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body" id="legalBody"></div>
+    <div class="modal-foot">
+      <span class="hint" id="legalHint"></span>
+      <button class="pri" data-close="1">我知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- 第一次打开时问一句：要不要让她主动来信。
+     ★ 无论点哪个、或者按 Esc / 点遮罩关掉，都记为"已经答过" ⇒ 只问这一次。
+     ★ 默认仍然是**关闭**：只有明确点了"愿意"，开关才会被打开。 -->
+<div class="modal" id="introModal" hidden>
+  <div class="modal-mask" data-close="1"></div>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="introTitle">
+    <div class="modal-head">
+      <h3 id="introTitle">她会偶尔主动给你写信</h3>
+      <button class="modal-x" data-close="1" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <p>这件事现在是<b>开着的</b>：她不只回你的信，也会自己找上门。</p>
+      <p>她会在这几种时候写一封：</p>
+      <ul>
+        <li>你刚听完一首歌，她有话想说的时候；</li>
+        <li>她上一封问过你、还没等到回音的时候；</li>
+        <li>你好几天没打开，她想告诉你这几天她这边的样子。</li>
+      </ul>
+      <p class="hint">
+        不过很克制：<b>24 小时最多 1 封、7 天最多 4 封</b>，只在可打扰时段里，
+        而且<b>找不到一件值得写的事就不写</b>。随时可以在设置里关掉。
+      </p>
+    </div>
+    <div class="modal-foot">
+      <button id="introNo">先不用，关掉吧</button>
+      <button class="pri" id="introYes">好，就让她这样</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
+<script src="legal.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

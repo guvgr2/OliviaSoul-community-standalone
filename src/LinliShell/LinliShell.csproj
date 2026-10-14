@@ -11,6 +11,11 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <Version>1.0.0</Version>
+    <!-- ★ 不设这条，exe 就顶着 .NET 的默认图标 —— 开始菜单、任务栏、桌面快捷方式
+         继承的都是 exe 自己的图标，安装程序里设了 SetupIconFile 也救不回来。
+         图标只有一份真源，放在 installer\ 下，跟安装程序用的是同一个文件，
+         免得以后改了一个忘了另一个。 -->
+    <ApplicationIcon>..\..\installer\linli.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

@@ -19,6 +19,21 @@
   --radius-lg: 20px;
 }
 
+/* ---- 信件字体 ----
+   ★ 原版游戏的信纸正文就是它：游戏 CSS 里 .mail-envelope__letter-text
+     写的是 SentyTEA, serif, 20px, 行高 1.5。为了让这边的信跟那边一个字迹，
+     随包了这个字体（5.4 MB，取自原版客户端资源；权利不归我们，见协议第四条）。
+   ★ font-display 用 swap 而不是 block：block 在字体没到位时正文整段空白
+     （原版就是 block）。本地文件加载极快，swap 既几乎看不出闪动，
+     又不会在万一读不到文件时让信件正文一直空着。 */
+@font-face {
+  font-family: "SentyTEA";
+  src: url("fonts/SentyTEA.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -74,7 +89,7 @@ html, body {
   overflow: hidden;
 }
 
-/* ---- 左栏：贴左沿的两个圆形按钮 ---- */
+/* ---- 左栏：四个圆形导航按钮 ---- */
 .rail {
   position: relative;
   border-right: 1px solid rgba(255, 255, 255, .08);
@@ -82,15 +97,20 @@ html, body {
   align-items: center;
   justify-content: center;
 }
+/* ★★ 这里原来是 `right: 100%` —— 那会把整组按钮放到左栏的**左侧外面**
+   （栏左沿 x=23，按钮右沿正好落在 23，于是整组落在 x=-29..23）。
+   而 .win 有 overflow:hidden（圆角要它），超过窗口内边 22px 的部分一律被裁掉
+   ⇒ 四个导航按钮一个都看不见，用户根本切不了页。
+   真渲染一跑就露出来了；静态读 CSS 很难发现（`right: 100%` 看起来像个刻意的布局）。
+   现在改成在栏内居中：46px 的按钮放进 76px 的栏，左右各留 15px。 */
 .rail .stack {
   position: absolute;
-  right: 100%;
+  left: 50%;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-right: 6px;
 }
 .rb {
   width: 46px; height: 46px;
@@ -157,6 +177,14 @@ input, textarea, select {
 }
 input:focus, textarea:focus, select:focus { border-color: #807362; }
 textarea { resize: vertical; min-height: 132px; line-height: 1.75; }
+/* 写信框：原版写信那块同样用手写体（那边是 HanyiSentyGarden）。
+   我们只随包了 SentyTEA，就统一用这一个 —— 写的时候和读的时候是同一种字迹，
+   这本来也比两种更自然。（别写成 textarea：那是全部输入框，设置页里还有别的。） */
+#compose {
+  font-family: "SentyTEA", "STXingkai", "HanyiSentyGarden", serif;
+  font-size: 19px;
+  line-height: 1.62;
+}
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .row > * { flex: 1 1 200px; }
 .field { margin-bottom: 14px; }
@@ -177,6 +205,78 @@ button.pri { background: var(--p1); border-color: var(--p1); color: #18181b; }
 button.pri:hover { background: var(--p2); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ---- 液态玻璃交互：鼠标移上去高光跟着走，按下去像液体被挤了一下 ----
+   参数与设计预览（design-preview.html ② 节）**逐条一致**，一个没改 ——
+   那边已经用像素量过，这里照搬就行，不要再"微调"出第二套数字。
+   三层常驻 + 两个一次性：
+     ① 悬停：高光跟随指针（::before，240px 的柔光斑）
+     ② 悬停：边缘一圈内描光，指针越靠边越亮（::after，用 mask 抠出 1px 的边）
+     ③ 按下：**横竖不等比**缩放 + 内阴影 —— 液体是被挤，不是单纯变小（只缩 scale(.99) 会像 CSS 抖动）
+     ④ 一次性扫光：指针进入时掠过一道
+     ⑤ 点击涟漪：从指针位置散两层，带 overlay 混合 ⇒ 出折射感
+   ★ 只套在**能点**的东西上（button / .rb）。卡片不可点，套上去只会让人以为能点。 */
+button, .rb {
+  --mx: 50%; --my: 0%;
+  position: relative; overflow: hidden; isolation: isolate;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .19), 0 10px 30px rgba(0, 0, 0, .30);
+  transition: transform .2s cubic-bezier(.22, 1, .36, 1), box-shadow .2s,
+              border-color .2s, background .16s, color .16s;
+}
+button::before, .rb::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  background: radial-gradient(240px circle at var(--mx) var(--my),
+              rgba(255, 255, 255, .17), rgba(255, 255, 255, .05) 42%, transparent 66%);
+  opacity: 0; transition: opacity .28s;
+}
+button:hover::before, .rb:hover::before { opacity: 1; }
+button::after, .rb::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; z-index: 3; padding: 1px;
+  background: radial-gradient(180px circle at var(--mx) var(--my),
+              rgba(255, 255, 255, .55), transparent 62%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0; transition: opacity .28s;
+}
+button:hover::after, .rb:hover::after { opacity: .9; }
+button:active, .rb:active {
+  transform: scale(.988, .978) translateY(1px);
+  border-color: rgba(255, 255, 255, .26);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, .28),
+              inset 0 1px 0 rgba(255, 255, 255, .30),
+              0 3px 12px rgba(0, 0, 0, .38);
+}
+/* 禁用态不该"被挤"——按不动的东西给按下反馈是在骗人 */
+button:disabled:active { transform: none; }
+button:focus-visible, .rb:focus-visible {
+  outline: none; border-color: var(--p2);
+  box-shadow: 0 0 0 3px rgba(216, 207, 196, .16),
+              inset 0 1px 0 rgba(255, 255, 255, .22),
+              0 10px 30px rgba(0, 0, 0, .30);
+}
+.sheen {
+  position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  background: linear-gradient(105deg, transparent 32%, rgba(255, 255, 255, .10) 45%,
+              rgba(255, 255, 255, .20) 50%, rgba(255, 255, 255, .10) 55%, transparent 68%);
+  transform: translateX(-115%);
+}
+.sheen-on .sheen { animation: sheen .85s cubic-bezier(.3, .7, .4, 1); }
+@keyframes sheen { to { transform: translateX(115%); } }
+.ripple {
+  position: absolute; border-radius: 50%; pointer-events: none; z-index: 1;
+  background: radial-gradient(circle, rgba(255, 255, 255, .55),
+              rgba(255, 255, 255, .10) 58%, transparent 72%);
+  mix-blend-mode: overlay; transform: translate(-50%, -50%) scale(0);
+  animation: ripple .62s cubic-bezier(.22, 1, .36, 1) forwards;
+}
+.ripple.two { animation-duration: 1s; background: radial-gradient(circle, rgba(232, 224, 216, .34), transparent 70%); }
+@keyframes ripple { to { transform: translate(-50%, -50%) scale(1); opacity: 0; } }
+/* 系统里勾了"减少动效"就别硬给：扫光/涟漪/挤压全关，只留颜色变化 */
+@media (prefers-reduced-motion: reduce) {
+  .sheen-on .sheen, .ripple { animation: none; }
+  button:active, .rb:active { transform: none; }
+}
+
 /* ---- 信件 ---- */
 .letter {
   border-radius: var(--radius);
@@ -194,8 +294,18 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   font-size: 11px; padding: 2px 8px; border-radius: 999px;
   background: rgba(216, 207, 196, .16); color: var(--p2);
 }
-.letter .body { white-space: pre-wrap; line-height: 1.85; }
-.letter .body.pending { color: var(--tx4); font-style: italic; }
+/* 信的正文：跟原版一个字迹（SentyTEA, 20px/1.5）。
+   ★ 手写体的字面比黑体小一圈，20px 看着才跟 UI 的 14px 差不多重 ——
+     照抄 UI 的 14px 会让信显得又小又挤。行高也从 1.85 收到 1.5，跟原版一致。 */
+.letter .body {
+  white-space: pre-wrap;
+  font-family: "SentyTEA", "STXingkai", "HanyiSentyGarden", serif;
+  font-size: 20px;
+  line-height: 1.5;
+}
+/* ★ 等待中/出错这两态不要斜体：中文没有真斜体，浏览器会做倾斜合成，
+   手写体一倾斜就发飘。改用颜色和轻重区分。 */
+.letter .body.pending { color: var(--tx4); }
 .letter .body.err { color: #d98a7a; }
 
 .unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--p2); flex: none; }
@@ -210,6 +320,106 @@ pre.ctx {
   font: 12px/1.8 Consolas, monospace; white-space: pre-wrap; max-height: 260px; overflow: auto;
 }
 
+/* ---- 协议：底部一行小链接 + 弹层 ----
+   常见桌面软件的排法：正文不占设置页版面，只留一行低对比的小字，
+   点开在弹层里读全文。安装向导里读的是**同一份** 协议.txt（见 tools/sync-legal.mjs）。 */
+.legalbar {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  margin: 22px 2px 6px; padding-bottom: 4px;
+}
+.lnk {
+  height: auto; padding: 2px 4px;
+  background: none; border: 0; border-radius: 6px;
+  color: var(--tx4); font: 400 12.5px/1.6 inherit; cursor: pointer;
+}
+.lnk:hover { color: var(--tx2); background: none; text-decoration: underline; text-underline-offset: 3px; }
+.lnk-sep { color: var(--line); font-size: 12px; }
+
+/* ---- 弹窗：液态玻璃 ----
+   ★ 用的是 design-preview 第 2 节同一套配方：近透底 + 折射模糊 + 一圈内描光(::after)
+     + 一枚跟随指针的高光斑(::before)。指针位置由 app.js 写进 --mx/--my。
+   ★ 原来那张是 `linear-gradient(...), #17181c` —— 后面垫了一层**不透明实底**，
+     玻璃没有东西可透 ⇒ 只能是"磨砂卡片"。要真玻璃，就得把那层实底去掉。
+   ★ 两个伪元素都 position:absolute ⇒ 不会进 flex 流；但它们带 z-index，
+     会盖住静态子项 ⇒ .modal-head/.modal-body/.modal-foot 必须抬到 z-index:3。 */
+.modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; }
+.modal[hidden] { display: none; }
+.modal-mask {
+  position: absolute; inset: 0;
+  background: rgba(8, 8, 10, .56);
+  backdrop-filter: blur(6px) saturate(120%); -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+.modal-box {
+  position: relative; width: min(680px, calc(100vw - 64px)); max-height: calc(100vh - 96px);
+  display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 16px; border: 1px solid rgba(255, 255, 255, .15);
+  background: linear-gradient(158deg, rgba(255, 255, 255, .105) 0%, rgba(255, 255, 255, .05) 46%, rgba(255, 255, 255, .028) 100%);
+  backdrop-filter: blur(26px) saturate(170%) brightness(1.06);
+  -webkit-backdrop-filter: blur(26px) saturate(170%) brightness(1.06);
+  box-shadow: 0 26px 76px rgba(0, 0, 0, .62), inset 0 1px 0 rgba(255, 255, 255, .19);
+  animation: modalIn .22s cubic-bezier(.22, 1, .36, 1);
+}
+/* ① 高光斑：跟着指针走。没动过指针时停在左上（跟飞机版一致，钉死的那一版）。 */
+.modal-box::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(300px circle at var(--mx, 22%) var(--my, 6%),
+    rgba(255, 255, 255, .16) 0%, rgba(255, 255, 255, .055) 40%, transparent 68%);
+}
+/* ② 边缘的一圈内描光：只在 1px 的边框环上着色（mask xor 把中间挖空）。 */
+.modal-box::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  border-radius: inherit; padding: 1px;
+  background: radial-gradient(220px circle at var(--mx, 22%) var(--my, 6%),
+    rgba(255, 255, 255, .58) 0%, rgba(255, 255, 255, .18) 46%, rgba(255, 255, 255, .30) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+@media (prefers-reduced-motion: reduce) { .modal-box { animation: none; } }
+/* 自查用的两个开关（只给抓 twin 差用，正常使用永远不会加上）：
+   ★ .no-glass-fx   —— 只关弹窗自己的折射层。证明 A−B 的差确实来自 backdrop-filter。
+     （注意别顺手把 .modal-mask 的也关了：蒙层是 inset:0 铺满视口的，
+       关掉它整张页面都会变 ⇒ 差异跑出弹窗范围，判据就没法归因了。）
+   ★ .no-glass-paint —— 只关那两枚伪元素（高光斑 + 一圈内描光）。
+     A−C 的差 = 这两样东西贡献的像素，且因为 A/C 都带同样的文字，
+     内容（比如底部那个亮色主按钮）会在相减时自然抵消。
+   （跟 design-preview 里的 .no-glass-fx 同一个用法。） */
+.no-glass-fx .modal-box { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.no-glass-paint .modal-box::before,
+.no-glass-paint .modal-box::after { display: none; }
+/* ★ 把内容抬到两个玻璃伪元素之上，否则文字会被高光斑和描光蒙住一层。 */
+.modal-head, .modal-body, .modal-foot { position: relative; z-index: 3; }
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 12px; border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+.modal-head h3 { margin: 0; font-size: 15px; }
+.modal-x {
+  width: 30px; height: 30px; padding: 0; border-radius: 8px; font-size: 13px;
+  color: var(--tx3); border-color: transparent; background: transparent;
+}
+.modal-x:hover { background: var(--hi); color: var(--tx); }
+.modal-body { padding: 16px 22px 6px; overflow-y: auto; color: var(--tx2); font-size: 13.5px; }
+.modal-body .lead { color: var(--tx3); margin: 0 0 14px; }
+.modal-body h4 {
+  margin: 16px 0 6px; font-size: 13.5px; color: var(--tx);
+  padding-left: 10px; position: relative;
+}
+.modal-body h4:before {
+  content: ""; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 3px; border-radius: 2px; background: var(--p4);
+}
+.modal-body p { margin: 0 0 4px; white-space: pre-wrap; }
+.modal-body .tail { color: var(--tx3); margin-top: 16px; }
+.modal-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px 16px; border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.modal-foot .hint { padding-left: 0; }
+
 .toast {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
   background: rgba(20, 21, 25, .96); border: 1px solid rgba(255, 255, 255, .14);
@@ -221,3 +431,16 @@ pre.ctx {
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .12); border-radius: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- 播放器：时段跨越走交叉淡入，不硬切 ----
+   竞品有专门的 Transition_1200_1730.mp4 转场片，我们没有这类素材，
+   改成两层 video 叠加：旧的微放大淡出、新的微缩小淡入。 */
+.xfade {
+  position: relative; aspect-ratio: 16 / 9; border-radius: 10px;
+  overflow: hidden; background: #000;
+}
+.xfade video {
+  position: absolute; inset: 0; width: 100%; height: 100%; background: #000;
+  transition: opacity .9s ease, transform .9s ease;
+}
+.xfade video.under { opacity: 0; transform: scale(1.03); pointer-events: none; }
